@@ -7,6 +7,8 @@
 #include "../resolver.h"
 #include "../tls/context.h"
 #include "../uri.h"
+#include "../util.h"
+
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/error.h"
 #include "mbedtls/ssl.h"
@@ -118,7 +120,7 @@ public:
         return true;
     }
 
-    auto handshake(char const *pem_file, bool throw_exception = false) -> bool {
+    auto handshake(char const *own_cert, char const *own_key, bool throw_exception = false) -> bool {
         char const *pers = "ssl_client1";
 
         if (_ctx) {
@@ -163,7 +165,26 @@ public:
         }
 
         mbedtls_x509_crt_parse_path(&_ctx->cacert, "/etc/ssl/certs");
-        if (pem_file != nullptr && mbedtls_x509_crt_parse_file(&_ctx->cacert, pem_file) < 0) {
+
+        if ((own_key != nullptr && own_cert == nullptr) || (own_key == nullptr && own_cert != nullptr)) {
+            _ctx.reset();
+            if (throw_exception) {
+                throw std::runtime_error("Certificate or private key is missing");
+            } else {
+                return false;
+            }
+        }
+
+        if (own_cert != nullptr && mbedtls_x509_crt_parse_file(&_ctx->own_cert, own_cert) < 0) {
+            _ctx.reset();
+            if (throw_exception) {
+                throw std::runtime_error(std::string("Failed to parse CRT"));
+            } else {
+                return false;
+            }
+        }
+
+        if (own_key != nullptr && mbedtls_pk_parse_keyfile(&_ctx->own_key, own_key, nullptr) < 0) {
             _ctx.reset();
             if (throw_exception) {
                 throw std::runtime_error(std::string("Failed to parse CRT"));
@@ -186,6 +207,18 @@ public:
         mbedtls_ssl_conf_ca_chain(&_ctx->conf, &_ctx->cacert, nullptr);
         mbedtls_ssl_conf_dbg(&_ctx->conf, &socket::mbedtls_debug, stdout);
 
+        if (own_cert != nullptr && own_key != nullptr) {
+            if (0 != mbedtls_ssl_conf_own_cert(&_ctx->conf, &_ctx->own_cert, &_ctx->own_key)) {
+                _ctx.reset();
+                if (throw_exception) {
+                    throw std::runtime_error(std::string("Failed to setup own certificate"));
+                } else {
+                    return false;
+                }
+            }
+            LOG("Use own certificate and private key.");
+        }
+
         if (0 != mbedtls_ssl_setup(&_ctx->ssl, &_ctx->conf)) {
             _ctx.reset();
             if (throw_exception) {
@@ -206,6 +239,7 @@ public:
 
         mbedtls_ssl_set_bio(&_ctx->ssl, this, &socket::mbedtls_send, &socket::mbedtls_recv, nullptr);
 
+        LOG("Start TLS handshake ...");
         while (true) {
             auto ret = mbedtls_ssl_handshake(&_ctx->ssl);
             if (ret == 0) {
@@ -222,6 +256,7 @@ public:
             }
         }
 
+        LOG("Verify TLS result ...");
         auto flags = mbedtls_ssl_get_verify_result(&_ctx->ssl);
         if (flags != 0) {
             _ctx.reset();
