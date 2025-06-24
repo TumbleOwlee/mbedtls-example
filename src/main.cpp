@@ -1,8 +1,12 @@
 #include "net/client/socket.h"
 #include "net/server/socket.h"
 
+/*!
+ * Simple client/server application for Mbed-TLS testing
+ */
 int main(int argc, char **argv) {
     try {
+        // Start simple server (currently without TLS)
         if (argc > 3 && strcmp(argv[1], "server") == 0) {
             net::server::socket socket;
 
@@ -25,7 +29,9 @@ int main(int argc, char **argv) {
                 LOG("Handle connection ...");
             }
 
-        } else if (argc > 3 && strcmp(argv[1], "client") == 0) {
+        }
+        // Start simple client with TLS handshake
+        else if (argc > 3 && strcmp(argv[1], "client") == 0) {
             net::client::socket socket;
 
             if (!socket.connect(argv[2], ::atoi(argv[3]), true)) {

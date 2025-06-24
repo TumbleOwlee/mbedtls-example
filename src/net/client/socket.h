@@ -27,12 +27,27 @@ namespace net {
 
 namespace client {
 
+/*!
+ * \brief Client socket with optional TLS support
+ *
+ * This class provides a simple interface for creating a client socket that can connect to a server
+ */
 class socket {
 public:
     static constexpr int FD_INVALID = -1;
 
+    /*!
+     * \brief Default constructor
+     *
+     * Creates a socket object without initializing it.
+     */
     socket() = default;
 
+    /*!
+     * \brief Move constructor
+     *
+     * Transfers ownership of the socket from another instance to this one.
+     */
     socket(socket &&other) {
         _fd = other._fd;
         _uri = std::move(other._uri);
@@ -40,8 +55,19 @@ public:
         _ctx = std::move(other._ctx);
         other._fd = FD_INVALID;
     };
+
+    /*!
+     * \brief Deleted copy constructor
+     *
+     * Copying a socket is not allowed, as it would lead to resource management issues.
+     */
     socket(socket const &) = delete;
 
+    /*!
+     * \brief Move assignment operator
+     *
+     * Transfers ownership of the socket from another instance to this one.
+     */
     auto operator=(socket &&other) -> socket & {
         _fd = other._fd;
         _uri = std::move(other._uri);
@@ -50,10 +76,26 @@ public:
         other._fd = FD_INVALID;
         return *this;
     }
+
+    /*!
+     * \brief Deleted copy assignment operator
+     *
+     * Copying a socket is not allowed, as it would lead to resource management issues.
+     */
     auto operator=(socket const &) -> socket & = delete;
 
+    /*!
+     * \brief Destructor
+     *
+     * Cleans up the socket resources.
+     */
     ~socket() { close(); }
 
+    /*!
+     * \brief Closes the socket and releases resources
+     *
+     * This method resets the context and URI, and closes the file descriptor if it is valid.
+     */
     auto close() -> void {
         _ctx.reset();
         _uri.reset();
@@ -63,6 +105,20 @@ public:
         _fd = FD_INVALID;
     }
 
+    /*!
+     * \brief Connects to a server using the specified URI and port
+     *
+     * This method parses the URI, creates a socket, and connects to the server.
+     * If the socket is already created, it throws an exception or returns false based on the throw_exception flag.
+     *
+     * \param uri The URI of the server to connect to
+     * \param port The port number to connect to
+     * \param throw_exception If true, throws an exception on error; otherwise, returns false
+     *
+     * \throws std::runtime_error if an error occurs and throw_exception is true
+     *
+     * \return true if the connection was successful, false otherwise
+     */
     auto connect(std::string uri, uint16_t port, bool throw_exception = false) -> bool {
         static constexpr int SUCCESS = 0;
 
@@ -120,6 +176,21 @@ public:
         return true;
     }
 
+    /*!
+     * \brief Performs a TLS handshake with the server
+     *
+     * This method initializes the TLS context, sets up the SSL configuration, and performs the handshake.
+     * If the handshake is already performed or if there is an error, it throws an exception or returns false based on
+     * the throw_exception flag.
+     *
+     * \param own_cert Path to the own certificate file (optional)
+     * \param own_key Path to the own private key file (optional)
+     * \param throw_exception If true, throws an exception on error; otherwise, returns false
+     *
+     * \throws std::runtime_error if an error occurs and throw_exception is true
+     *
+     * \return true if the handshake was successful, false otherwise
+     */
     auto handshake(char const *own_cert, char const *own_key, bool throw_exception = false) -> bool {
         char const *pers = "ssl_client1";
 
@@ -272,6 +343,17 @@ public:
         return !!_ctx;
     }
 
+    /*!
+     * \brief Sends data over the socket
+     *
+     * This method sends data over the socket. If the socket is using TLS, it uses the mbedtls_ssl_write function;
+     * otherwise, it uses the standard send function.
+     *
+     * \param buf Pointer to the data buffer to send
+     * \param len Length of the data to send
+     *
+     * \return The number of bytes sent, or a negative error code on failure
+     */
     auto send(const unsigned char *buf, size_t len) -> int {
         if (_ctx) {
             return mbedtls_ssl_write(&_ctx->ssl, buf, len);
@@ -280,6 +362,17 @@ public:
         }
     }
 
+    /*!
+     * \brief Receives data from the socket
+     *
+     * This method receives data from the socket. If the socket is using TLS, it uses the mbedtls_ssl_read function;
+     * otherwise, it uses the standard recv function.
+     *
+     * \param buf Pointer to the buffer to store received data
+     * \param len Length of the buffer
+     *
+     * \return The number of bytes received, or a negative error code on failure
+     */
     auto recv(unsigned char *buf, size_t len) -> int {
         if (_ctx) {
             return mbedtls_ssl_read(&_ctx->ssl, buf, len);
