@@ -4,11 +4,12 @@
 #include "mbedtls/debug.h"
 #endif
 
+#include "../resolver.h"
+#include "../tls/context.h"
+#include "../uri.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/error.h"
 #include "mbedtls/ssl.h"
-#include "resolve.h"
-#include "tls_context.h"
 
 #include <arpa/inet.h>
 #include <boost/url.hpp>

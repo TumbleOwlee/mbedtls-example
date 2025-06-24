@@ -1,7 +1,7 @@
 #include <iostream>
 
-#include "client.h"
-#include "server.h"
+#include "net/client/socket.h"
+#include "net/server/socket.h"
 
 int main(int argc, char **argv) {
     if (argc > 3 && strcmp(argv[1], "server") == 0) {

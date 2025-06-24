@@ -1,5 +1,7 @@
 #pragma once
 
+#include "uri.h"
+
 #include <arpa/inet.h>
 #include <boost/url/parse.hpp>
 #include <netdb.h>
@@ -10,11 +12,6 @@
 #include <sys/types.h>
 
 namespace net {
-
-struct uri {
-    std::string ip;
-    std::string hostname;
-};
 
 class resolver {
 public:
