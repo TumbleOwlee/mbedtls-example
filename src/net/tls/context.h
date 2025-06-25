@@ -3,9 +3,7 @@
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/ssl.h"
 
-namespace net {
-
-namespace tls {
+namespace net::tls {
 
 struct context {
     mbedtls_entropy_context entropy;
@@ -37,8 +35,12 @@ struct context {
         mbedtls_entropy_free(&entropy);
         mbedtls_psa_crypto_free();
     }
+
+    context(context const &) = delete;
+    auto operator=(context const &) -> context & = delete;
+
+    context(context &&) = default;
+    auto operator=(context &&) -> context & = default;
 };
 
-} // namespace tls
-
-} // namespace net
+} // namespace net::tls

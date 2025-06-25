@@ -8,9 +8,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace net {
-
-namespace server {
+namespace net::server {
 
 class connection {
 public:
@@ -146,6 +144,4 @@ private:
     sockaddr_in _addr;
 };
 
-} // namespace server
-
-} // namespace net
+} // namespace net::server

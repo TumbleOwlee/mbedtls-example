@@ -1,0 +1,198 @@
+#pragma once
+
+#ifdef DEBUG
+#include "mbedtls/debug.h"
+#endif
+
+#include "../tls/context.h"
+#include "../util.h"
+
+#include "stream.h"
+
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/ssl.h"
+
+#include <boost/url.hpp>
+#include <sys/socket.h>
+
+namespace net::client {
+
+template <typename S = stream>
+class tls_stream : public stream {
+public:
+    static auto create(S &&stream, char const *own_cert, char const *own_key) -> tls_stream {
+        return std::move(tls_stream(std::move(stream), own_cert, own_key));
+    }
+
+    tls_stream(tls_stream &&) = default;
+    tls_stream(tls_stream const &) = delete;
+
+    auto operator=(tls_stream &&) -> tls_stream & = default;
+    auto operator=(tls_stream const &) -> tls_stream & = delete;
+
+    ~tls_stream() { close(); }
+
+    auto close() -> void {
+        _ctx.reset();
+        _stream.close();
+    }
+
+    auto connect() -> bool {
+        char const *pers = "ssl_client1";
+
+        if (!_stream.is_connected() && !_stream.connect()) {
+            return false;
+        }
+
+#ifdef DEBUG
+        mbedtls_debug_set_threshold(3);
+#endif
+
+        _ctx.reset(new ::net::tls::context());
+
+        if (psa_crypto_init() != PSA_SUCCESS) {
+            _ctx.reset();
+            return false;
+        }
+
+        if (mbedtls_ctr_drbg_seed(&_ctx->ctr_drbg, mbedtls_entropy_func, &_ctx->entropy,
+                                  reinterpret_cast<const unsigned char *>(pers), strlen(pers)) != 0) {
+            _ctx.reset();
+            return false;
+        }
+
+        mbedtls_x509_crt_parse_path(&_ctx->cacert, "/etc/ssl/certs");
+
+        if ((_own.key != nullptr && _own.cert == nullptr) || (_own.key == nullptr && _own.cert != nullptr)) {
+            _ctx.reset();
+            return false;
+        }
+
+        if (_own.cert != nullptr && mbedtls_x509_crt_parse_file(&_ctx->own_cert, _own.cert) < 0) {
+            _ctx.reset();
+            return false;
+        }
+
+        if (_own.key != nullptr && mbedtls_pk_parse_keyfile(&_ctx->own_key, _own.key, nullptr) < 0) {
+            _ctx.reset();
+            return false;
+        }
+
+        if (0 != mbedtls_ssl_config_defaults(&_ctx->conf, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM,
+                                             MBEDTLS_SSL_PRESET_DEFAULT)) {
+            _ctx.reset();
+            return false;
+        }
+
+        mbedtls_ssl_conf_authmode(&_ctx->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+        mbedtls_ssl_conf_ca_chain(&_ctx->conf, &_ctx->cacert, nullptr);
+        mbedtls_ssl_conf_dbg(&_ctx->conf, &tls_stream::mbedtls_debug, stdout);
+
+        if (_own.cert != nullptr && _own.key != nullptr) {
+            if (0 != mbedtls_ssl_conf_own_cert(&_ctx->conf, &_ctx->own_cert, &_ctx->own_key)) {
+                _ctx.reset();
+                return false;
+            }
+            LOG("Use own certificate and private key.");
+        }
+
+        if (0 != mbedtls_ssl_setup(&_ctx->ssl, &_ctx->conf)) {
+            _ctx.reset();
+            return false;
+        }
+
+        if (0 != mbedtls_ssl_set_hostname(&_ctx->ssl, _stream._ctx.uri.hostname.c_str())) {
+            _ctx.reset();
+            return false;
+        }
+
+        mbedtls_ssl_set_bio(&_ctx->ssl, this, &tls_stream::mbedtls_send, &tls_stream::mbedtls_recv, nullptr);
+
+        LOG("Start TLS handshake ...");
+        while (true) {
+            auto ret = mbedtls_ssl_handshake(&_ctx->ssl);
+            if (ret == 0) {
+                break;
+            }
+
+            if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
+                _ctx.reset();
+                return false;
+            }
+        }
+
+        LOG("Verify TLS result ...");
+        auto flags = mbedtls_ssl_get_verify_result(&_ctx->ssl);
+        if (flags != 0) {
+            _ctx.reset();
+            return false;
+        }
+
+        return true;
+    }
+
+    auto send(uint8_t const *const buf, size_t len) -> int {
+        if (!is_connected()) {
+            return -1;
+        }
+        return mbedtls_ssl_write(&_ctx->ssl, buf, len);
+    }
+
+    auto send(std::vector<uint8_t> const &buf) -> int {
+        if (!is_connected()) {
+            return -1;
+        }
+        return mbedtls_ssl_write(&_ctx->ssl, buf.data(), buf.size());
+    }
+
+    auto recv(uint8_t *const buf, size_t len) -> int {
+        if (!is_connected()) {
+            return -1;
+        }
+        return mbedtls_ssl_read(&_ctx->ssl, buf, len);
+    }
+
+    auto recv(std::vector<uint8_t> &buf) -> int {
+        if (!is_connected()) {
+            return -1;
+        }
+        return mbedtls_ssl_read(&_ctx->ssl, buf.data(), buf.capacity());
+    }
+
+    auto is_connected() -> bool { return _stream.is_connected() && !!_ctx; }
+
+private:
+    template <typename T>
+    using ptr = std::unique_ptr<T>;
+
+    S _stream;
+
+    struct {
+        char const *const cert;
+        char const *const key;
+    } _own;
+
+    ptr<::net::tls::context> _ctx;
+
+    tls_stream(class tcp_stream &&stream) : _stream(std::move(stream)) {}
+
+    static auto mbedtls_send(void *ctx, const unsigned char *buf, size_t len) -> int {
+        class tls_stream *tls_stream = reinterpret_cast<class tls_stream *>(ctx);
+        return ::send(tls_stream->_stream._ctx.fd, buf, len, 0);
+    }
+
+    static auto mbedtls_recv(void *ctx, unsigned char *buf, size_t len) -> int {
+        class tls_stream *tls_stream = reinterpret_cast<class tls_stream *>(ctx);
+        return ::recv(tls_stream->_stream._ctx.fd, buf, len, 0);
+    }
+
+    static void mbedtls_debug(void *ctx, int level, const char *file, int line, const char *str) {
+        fprintf((FILE *)ctx, "%s:%04d: %s", file, line, str);
+        fflush((FILE *)ctx);
+    }
+
+    tls_stream(S &&stream, char const *const cert, char const *const key)
+        : _stream(std::move(stream)), _own({cert, key}), _ctx() {}
+};
+
+} // namespace net::client
