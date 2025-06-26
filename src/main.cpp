@@ -36,8 +36,14 @@ int main(int argc, char **argv) {
         }
         // Start simple client with TLS handshake
         else if (argc > 3 && strcmp(argv[1], "client") == 0) {
-            auto tcp = tcp_stream::create(argv[2], ::atoi(argv[3])).value();
-            if (!tcp.connect()) {
+            auto res = tcp_stream::create(argv[2], ::atoi(argv[3]));
+            if (res.is_err()) {
+                ERR("Failed to create tcp stream...");
+                return 1;
+            }
+
+            auto tcp = res.ok();
+            if (tcp.connect().is_err()) {
                 ERR("Failed to connect ...");
                 return 1;
             }
@@ -46,7 +52,7 @@ int main(int argc, char **argv) {
             auto own_key = argc > 5 ? argv[5] : nullptr;
 
             tls_stream tls = tls_stream<tcp_stream>::create(std::move(tcp), own_cert, own_key);
-            if (!tls.connect()) {
+            if (tls.connect().is_err()) {
                 ERR("Failed to perform TLS handshake ...");
                 return 1;
             }
